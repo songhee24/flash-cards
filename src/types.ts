@@ -12,12 +12,18 @@ export interface ExportPayload {
 }
 
 export interface SessionPrefs {
-  /** Seconds before the English answer is shown automatically (0 = off). */
+  /** Seconds before the English answer is shown automatically (0 = off). Ignored in voice-primary mode (STT on). */
   hintDelaySec: number
-  /** After Correct/Wrong, wait this many seconds before the next card. */
+  /** After check, wait this many seconds before the next card. */
   betweenCardsDelaySec: number
   /** Randomize card order each session. */
   shuffle: boolean
-  /** Offer microphone input when the browser supports it. */
+  /** Prefer voice answer flow when SpeechRecognition is available. */
   preferVoiceInput: boolean
+  /** Speak the Russian prompt when a new card appears. */
+  autoSpeakRuQuestion: boolean
+  /** After evaluation, speak English answer then auto-advance (no manual Correct/Wrong). */
+  autoAdvanceAfterCheck: boolean
+  /** After Russian TTS ends, start listening for English (voice-primary only). */
+  autoStartSttAfterRu: boolean
 }

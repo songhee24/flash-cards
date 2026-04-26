@@ -20,18 +20,44 @@ function getSpeechRecognitionCtor(): SpeechRecCtor | undefined {
   return w.SpeechRecognition ?? w.webkitSpeechRecognition
 }
 
-export function speakEnglish(text: string): void {
-  if (typeof window === 'undefined' || !window.speechSynthesis) return
-  window.speechSynthesis.cancel()
-  const u = new SpeechSynthesisUtterance(text)
-  u.lang = 'en-US'
-  window.speechSynthesis.speak(u)
-}
-
+/** Cancel current speech. Call before starting a new utterance. */
 export function stopSpeaking(): void {
   if (typeof window !== 'undefined' && window.speechSynthesis) {
     window.speechSynthesis.cancel()
   }
+}
+
+function speakUtterance(text: string, lang: string): Promise<void> {
+  return new Promise((resolve) => {
+    if (typeof window === 'undefined' || !window.speechSynthesis) {
+      resolve()
+      return
+    }
+    window.speechSynthesis.cancel()
+    const u = new SpeechSynthesisUtterance(text)
+    u.lang = lang
+    u.onend = () => resolve()
+    u.onerror = () => resolve()
+    window.speechSynthesis.speak(u)
+  })
+}
+
+/** Fire-and-forget English TTS (cancels previous). */
+export function speakEnglish(text: string): void {
+  void speakUtterance(text, 'en-US')
+}
+
+/** Fire-and-forget Russian TTS (cancels previous). */
+export function speakRussian(text: string): void {
+  void speakUtterance(text, 'ru-RU')
+}
+
+export function speakEnglishAsync(text: string): Promise<void> {
+  return speakUtterance(text, 'en-US')
+}
+
+export function speakRussianAsync(text: string): Promise<void> {
+  return speakUtterance(text, 'ru-RU')
 }
 
 export function isSpeechRecognitionAvailable(): boolean {

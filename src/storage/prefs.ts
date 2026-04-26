@@ -6,7 +6,10 @@ export const DEFAULT_PREFS: SessionPrefs = {
   hintDelaySec: 0,
   betweenCardsDelaySec: 2,
   shuffle: true,
-  preferVoiceInput: false,
+  preferVoiceInput: true,
+  autoSpeakRuQuestion: true,
+  autoAdvanceAfterCheck: true,
+  autoStartSttAfterRu: false,
 }
 
 export function loadPrefs(): SessionPrefs {
@@ -29,6 +32,18 @@ export function loadPrefs(): SessionPrefs {
         typeof p.preferVoiceInput === 'boolean'
           ? p.preferVoiceInput
           : DEFAULT_PREFS.preferVoiceInput,
+      autoSpeakRuQuestion:
+        typeof p.autoSpeakRuQuestion === 'boolean'
+          ? p.autoSpeakRuQuestion
+          : DEFAULT_PREFS.autoSpeakRuQuestion,
+      autoAdvanceAfterCheck:
+        typeof p.autoAdvanceAfterCheck === 'boolean'
+          ? p.autoAdvanceAfterCheck
+          : DEFAULT_PREFS.autoAdvanceAfterCheck,
+      autoStartSttAfterRu:
+        typeof p.autoStartSttAfterRu === 'boolean'
+          ? p.autoStartSttAfterRu
+          : DEFAULT_PREFS.autoStartSttAfterRu,
     }
   } catch {
     return { ...DEFAULT_PREFS }

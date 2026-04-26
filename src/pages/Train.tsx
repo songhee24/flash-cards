@@ -8,6 +8,9 @@ import {
   isSpeechRecognitionAvailable,
   listenEnglish,
   speakEnglish,
+  speakEnglishAsync,
+  speakRussian,
+  speakRussianAsync,
   stopSpeaking,
 } from '../lib/speech'
 
@@ -38,25 +41,47 @@ export default function Train() {
 
   const hintTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null)
   const advanceTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null)
+  const speakGenRef = useRef(0)
+  const cardRef = useRef<Card | null>(null)
+
+  const voicePrimary =
+    prefs.preferVoiceInput && isSpeechRecognitionAvailable()
+  const textVoiceFallback =
+    prefs.preferVoiceInput && !isSpeechRecognitionAvailable()
+  const classicTyping = !prefs.preferVoiceInput
 
   const usable = useMemo(
     () => allCards.filter((c) => c.ru.trim() && c.en.trim()),
     [allCards],
   )
 
-  const startSession = useCallback((cards: Card[], p: SessionPrefs) => {
-    const list = cards.filter((c) => c.ru.trim() && c.en.trim())
-    const q = p.shuffle
-      ? shuffle(list)
-      : [...list].sort((a, b) => a.createdAt - b.createdAt)
-    setQueue(q)
-    setIndex(0)
-    setPhase('answer')
-    setUserAnswer('')
-    setHintShown(p.hintDelaySec <= 0)
-    setMatchResult(null)
-    setSttError(null)
+  const card = queue[index]
+
+  useEffect(() => {
+    cardRef.current = card
+  }, [card])
+
+  const initialHintShown = useCallback((p: SessionPrefs) => {
+    const vp = p.preferVoiceInput && isSpeechRecognitionAvailable()
+    return vp ? false : p.hintDelaySec <= 0
   }, [])
+
+  const startSession = useCallback(
+    (cards: Card[], p: SessionPrefs) => {
+      const list = cards.filter((c) => c.ru.trim() && c.en.trim())
+      const q = p.shuffle
+        ? shuffle(list)
+        : [...list].sort((a, b) => a.createdAt - b.createdAt)
+      setQueue(q)
+      setIndex(0)
+      setPhase('answer')
+      setUserAnswer('')
+      setHintShown(initialHintShown(p))
+      setMatchResult(null)
+      setSttError(null)
+    },
+    [initialHintShown],
+  )
 
   const reloadFromDb = useCallback(async () => {
     const cards = await getCardsSorted()
@@ -77,14 +102,12 @@ export default function Train() {
     })()
   }, [reloadFromDb, startSession])
 
-  const card = queue[index]
-
   useEffect(() => {
     if (hintTimerRef.current) {
       window.clearTimeout(hintTimerRef.current)
       hintTimerRef.current = null
     }
-    if (phase !== 'answer' || !card) return
+    if (phase !== 'answer' || !card || voicePrimary) return
     if (prefs.hintDelaySec <= 0) {
       queueMicrotask(() => setHintShown(true))
       return
@@ -99,7 +122,7 @@ export default function Train() {
         hintTimerRef.current = null
       }
     }
-  }, [card, phase, prefs.hintDelaySec])
+  }, [card, phase, prefs.hintDelaySec, voicePrimary])
 
   const persistPrefs = (next: SessionPrefs) => {
     setPrefs(next)
@@ -128,14 +151,14 @@ export default function Train() {
     setUserAnswer('')
     setMatchResult(null)
     setSttError(null)
-    setHintShown(prefs.hintDelaySec <= 0)
+    setHintShown(voicePrimary ? false : prefs.hintDelaySec <= 0)
     setIndex((i) => {
       if (queue.length === 0) return 0
       return (i + 1) % queue.length
     })
-  }, [prefs.hintDelaySec, queue.length])
+  }, [prefs.hintDelaySec, queue.length, voicePrimary])
 
-  const scheduleAdvance = () => {
+  const scheduleAdvance = useCallback(() => {
     clearAdvance()
     const ms = prefs.betweenCardsDelaySec * 1000
     if (ms <= 0) {
@@ -143,15 +166,69 @@ export default function Train() {
       return
     }
     advanceTimerRef.current = window.setTimeout(goNext, ms)
+  }, [prefs.betweenCardsDelaySec, goNext])
+
+  const runCheck = useCallback(
+    (answerText: string) => {
+      const c = cardRef.current
+      if (!c) return
+      const ok = answersMatch(answerText, c.en)
+      setUserAnswer(answerText)
+      setMatchResult(ok)
+      setPhase('review')
+      setHintShown(true)
+      stopSpeaking()
+      if (prefs.autoAdvanceAfterCheck) {
+        void speakEnglishAsync(c.en).then(() => scheduleAdvance())
+      } else {
+        speakEnglish(c.en)
+      }
+    },
+    [prefs.autoAdvanceAfterCheck, scheduleAdvance],
+  )
+
+  const beginListening = useCallback(async () => {
+    setSttError(null)
+    setSttLoading(true)
+    try {
+      const text = await listenEnglish()
+      runCheck(text)
+    } catch (e) {
+      setSttError(e instanceof Error ? e.message : 'Ошибка микрофона')
+    } finally {
+      setSttLoading(false)
+    }
+  }, [runCheck])
+
+  const beginListeningRef = useRef(beginListening)
+  useEffect(() => {
+    beginListeningRef.current = beginListening
+  }, [beginListening])
+
+  useEffect(() => {
+    if (phase !== 'answer' || !card || !prefs.autoSpeakRuQuestion) return
+    const gen = ++speakGenRef.current
+    let cancelled = false
+    void speakRussianAsync(card.ru).then(() => {
+      if (cancelled || gen !== speakGenRef.current) return
+      const vp = prefs.preferVoiceInput && isSpeechRecognitionAvailable()
+      if (prefs.autoStartSttAfterRu && vp) {
+        void beginListeningRef.current()
+      }
+    })
+    return () => {
+      cancelled = true
+      stopSpeaking()
+    }
+  }, [card, phase, prefs.autoSpeakRuQuestion, prefs.autoStartSttAfterRu, prefs.preferVoiceInput])
+
+  const handleTextSubmit = () => {
+    if (!userAnswer.trim()) return
+    runCheck(userAnswer)
   }
 
-  const handleCheck = () => {
-    if (!card) return
-    const ok = answersMatch(userAnswer, card.en)
-    setMatchResult(ok)
-    setPhase('review')
-    setHintShown(true)
-    speakEnglish(card.en)
+  const handleCheckClassic = () => {
+    runCheck(userAnswer)
   }
 
   const handleShowAnswer = () => {
@@ -159,30 +236,17 @@ export default function Train() {
     if (card) speakEnglish(card.en)
   }
 
-  const handleRepeatTts = () => {
+  const handleRepeatRu = () => {
+    if (card) speakRussian(card.ru)
+  }
+
+  const handleRepeatEn = () => {
     if (card) speakEnglish(card.en)
   }
 
-  const handleMic = async () => {
-    setSttError(null)
-    setSttLoading(true)
-    try {
-      const text = await listenEnglish()
-      setUserAnswer(text)
-    } catch (e) {
-      setSttError(e instanceof Error ? e.message : 'Ошибка микрофона')
-    } finally {
-      setSttLoading(false)
-    }
-  }
-
-  const handleMark = (correct: boolean) => {
-    void correct
+  const handleMark = () => {
     scheduleAdvance()
   }
-
-  const voiceAvailable =
-    prefs.preferVoiceInput && isSpeechRecognitionAvailable()
 
   if (loading) {
     return (
@@ -254,8 +318,10 @@ export default function Train() {
           <div className="settings-grid">
             <label className="field">
               <span className="label">
-                Авто-подсказка (сек)
-                <span className="hint">0 = только по кнопке</span>
+                Авто-подсказка EN (сек)
+                <span className="hint">
+                  Только без голоса; 0 = по кнопке «Подсказка»
+                </span>
               </span>
               <input
                 className="input narrow"
@@ -274,7 +340,7 @@ export default function Train() {
             <label className="field">
               <span className="label">
                 Пауза перед следующей карточкой (сек)
-                <span className="hint">0 = сразу</span>
+                <span className="hint">После озвучки эталона; 0 = сразу</span>
               </span>
               <input
                 className="input narrow"
@@ -311,9 +377,46 @@ export default function Train() {
                   })
                 }
               />
-              <span>
-                Показывать ввод голосом (если браузер поддерживает)
-              </span>
+              <span>Голосовой режим (микрофон + авто-проверка после ответа)</span>
+            </label>
+            <label className="field checkbox-field">
+              <input
+                type="checkbox"
+                checked={prefs.autoSpeakRuQuestion}
+                onChange={(e) =>
+                  persistPrefs({
+                    ...prefs,
+                    autoSpeakRuQuestion: e.target.checked,
+                  })
+                }
+              />
+              <span>Озвучивать вопрос по-русски при новой карточке</span>
+            </label>
+            <label className="field checkbox-field">
+              <input
+                type="checkbox"
+                checked={prefs.autoStartSttAfterRu}
+                onChange={(e) =>
+                  persistPrefs({
+                    ...prefs,
+                    autoStartSttAfterRu: e.target.checked,
+                  })
+                }
+              />
+              <span>Сразу слушать EN после русской фразы (без кнопки)</span>
+            </label>
+            <label className="field checkbox-field">
+              <input
+                type="checkbox"
+                checked={prefs.autoAdvanceAfterCheck}
+                onChange={(e) =>
+                  persistPrefs({
+                    ...prefs,
+                    autoAdvanceAfterCheck: e.target.checked,
+                  })
+                }
+              />
+              <span>Авто-переход к следующей карточке после эталона</span>
             </label>
           </div>
         </section>
@@ -331,51 +434,141 @@ export default function Train() {
 
       {phase === 'answer' && (
         <div className="answer-panel">
-          <label className="field block">
-            <span className="label">Ваш ответ (EN)</span>
-            <input
-              className="input large"
-              value={userAnswer}
-              onChange={(e) => setUserAnswer(e.target.value)}
-              placeholder="Type or use the mic…"
-              autoComplete="off"
-              autoCapitalize="off"
-              spellCheck={false}
-              disabled={sttLoading}
-            />
-          </label>
+          {voicePrimary && (
+            <>
+              <div className="answer-buttons voice-primary-actions">
+                <button
+                  type="button"
+                  className="btn primary large-btn"
+                  onClick={() => void beginListening()}
+                  disabled={sttLoading}
+                >
+                  {sttLoading ? 'Слушаю…' : 'Ответить голосом'}
+                </button>
+                <button
+                  type="button"
+                  className="btn"
+                  onClick={handleRepeatRu}
+                >
+                  Повторить вопрос (RU)
+                </button>
+                <button type="button" className="btn ghost" onClick={handleShowAnswer}>
+                  Подсказка (EN)
+                </button>
+              </div>
+              <label className="field block voice-fallback-input">
+                <span className="label">
+                  Или введите ответ (если микрофон ошибся) — Enter
+                </span>
+                <input
+                  className="input large"
+                  value={userAnswer}
+                  onChange={(e) => setUserAnswer(e.target.value)}
+                  onKeyDown={(e) => {
+                    if (e.key === 'Enter') handleTextSubmit()
+                  }}
+                  placeholder="Type English…"
+                  autoComplete="off"
+                  autoCapitalize="off"
+                  spellCheck={false}
+                  disabled={sttLoading}
+                />
+              </label>
+              <div className="answer-buttons">
+                <button
+                  type="button"
+                  className="btn"
+                  onClick={handleTextSubmit}
+                  disabled={!userAnswer.trim() || sttLoading}
+                >
+                  Готово
+                </button>
+              </div>
+            </>
+          )}
+
+          {textVoiceFallback && (
+            <>
+              <p className="notice warn">
+                В этом браузере нет распознавания речи — ответьте текстом и
+                нажмите «Готово» или Enter.
+              </p>
+              <label className="field block">
+                <span className="label">Ответ (EN)</span>
+                <input
+                  className="input large"
+                  value={userAnswer}
+                  onChange={(e) => setUserAnswer(e.target.value)}
+                  onKeyDown={(e) => {
+                    if (e.key === 'Enter') handleTextSubmit()
+                  }}
+                  placeholder="English answer…"
+                  autoComplete="off"
+                  autoCapitalize="off"
+                  spellCheck={false}
+                />
+              </label>
+              <div className="answer-buttons">
+                <button type="button" className="btn" onClick={handleRepeatRu}>
+                  Повторить вопрос (RU)
+                </button>
+                <button
+                  type="button"
+                  className="btn primary"
+                  onClick={handleTextSubmit}
+                  disabled={!userAnswer.trim()}
+                >
+                  Готово
+                </button>
+                <button type="button" className="btn ghost" onClick={handleShowAnswer}>
+                  Подсказка (EN)
+                </button>
+              </div>
+            </>
+          )}
+
+          {classicTyping && (
+            <>
+              <label className="field block">
+                <span className="label">Ваш ответ (EN)</span>
+                <input
+                  className="input large"
+                  value={userAnswer}
+                  onChange={(e) => setUserAnswer(e.target.value)}
+                  placeholder="English…"
+                  autoComplete="off"
+                  autoCapitalize="off"
+                  spellCheck={false}
+                />
+              </label>
+              <div className="answer-buttons">
+                <button
+                  type="button"
+                  className="btn primary"
+                  onClick={handleRepeatRu}
+                >
+                  Повторить вопрос (RU)
+                </button>
+                <button type="button" className="btn primary" onClick={handleCheckClassic}>
+                  Проверить
+                </button>
+                <button type="button" className="btn ghost" onClick={handleShowAnswer}>
+                  Показать ответ и озвучить
+                </button>
+              </div>
+            </>
+          )}
+
           {sttError && <p className="notice error">{sttError}</p>}
-          <div className="answer-buttons">
-            {voiceAvailable && (
-              <button
-                type="button"
-                className="btn"
-                onClick={() => void handleMic()}
-                disabled={sttLoading}
-              >
-                {sttLoading ? 'Слушаю…' : 'Голос'}
-              </button>
-            )}
-            <button type="button" className="btn primary" onClick={handleCheck}>
-              Проверить
-            </button>
-            <button type="button" className="btn ghost" onClick={handleShowAnswer}>
-              Показать ответ и озвучить
-            </button>
-          </div>
         </div>
       )}
 
       {phase === 'review' && card && (
         <div className="review-panel">
-          <p
-            className={
-              matchResult ? 'notice success' : 'notice warn'
-            }
-          >
+          <p className={matchResult ? 'notice success' : 'notice warn'}>
             {matchResult
-              ? 'Совпадение с эталоном (по простым правилам).'
-              : 'Текст не совпал с эталоном — оцените сами, верно ли вы знали слово.'}
+              ? 'Верно (по сравнению текста).'
+              : 'Не совпало с эталоном.'}
           </p>
           <p className="expected">
             Эталон: <strong>{card.en}</strong>
@@ -384,28 +577,19 @@ export default function Train() {
             Ваш вариант: {userAnswer.trim() || '—'}
           </p>
           <div className="review-buttons">
-            <button type="button" className="btn" onClick={handleRepeatTts}>
-              Повторить озвучку
-            </button>
-            <button
-              type="button"
-              className="btn primary"
-              onClick={() => handleMark(true)}
-            >
-              Верно
-            </button>
-            <button
-              type="button"
-              className="btn danger"
-              onClick={() => handleMark(false)}
-            >
-              Неверно
+            <button type="button" className="btn" onClick={handleRepeatEn}>
+              Повторить озвучку EN
             </button>
             <button type="button" className="btn ghost" onClick={goNext}>
               Следующая сейчас
             </button>
+            {!prefs.autoAdvanceAfterCheck && (
+              <button type="button" className="btn primary" onClick={handleMark}>
+                Продолжить
+              </button>
+            )}
           </div>
-          {prefs.betweenCardsDelaySec > 0 && (
+          {prefs.autoAdvanceAfterCheck && prefs.betweenCardsDelaySec > 0 && (
             <p className="muted small">
               Следующая карточка через {prefs.betweenCardsDelaySec} с…
             </p>

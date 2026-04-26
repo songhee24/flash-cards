@@ -380,6 +380,18 @@ body {
   margin-top: 0.75rem;
 }
 
+.voice-auto-hint {
+  margin: 0 0 0.5rem;
+  padding: 0.85rem 1rem;
+  text-align: center;
+  line-height: 1.4;
+  background: rgba(148, 163, 184, 0.12);
+  border-radius: var(--radius);
+  border: 1px solid var(--border);
+  color: var(--text);
+  font-size: 1.05rem;
+}
+
 .expected {
   margin: 0;
   font-size: 1.1rem;

@@ -9,7 +9,7 @@ export const DEFAULT_PREFS: SessionPrefs = {
   preferVoiceInput: true,
   autoSpeakRuQuestion: true,
   autoAdvanceAfterCheck: true,
-  autoStartSttAfterRu: false,
+  autoStartSttAfterRu: true,
 }
 
 export function loadPrefs(): SessionPrefs {

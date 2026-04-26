@@ -46,6 +46,8 @@ export default function Train() {
 
   const voicePrimary =
     prefs.preferVoiceInput && isSpeechRecognitionAvailable()
+  const autoListenAfterRu =
+    voicePrimary && prefs.autoStartSttAfterRu && prefs.autoSpeakRuQuestion
   const textVoiceFallback =
     prefs.preferVoiceInput && !isSpeechRecognitionAvailable()
   const classicTyping = !prefs.preferVoiceInput
@@ -437,14 +439,32 @@ export default function Train() {
           {voicePrimary && (
             <>
               <div className="answer-buttons voice-primary-actions">
-                <button
-                  type="button"
-                  className="btn primary large-btn"
-                  onClick={() => void beginListening()}
-                  disabled={sttLoading}
-                >
-                  {sttLoading ? 'Слушаю…' : 'Ответить голосом'}
-                </button>
+                {autoListenAfterRu ? (
+                  <p className="voice-auto-hint" aria-live="polite">
+                    {sttLoading
+                      ? 'Слушаю… говорите по-английски.'
+                      : 'После русской фразы микрофон включится сам — отвечайте вслух.'}
+                  </p>
+                ) : (
+                  <button
+                    type="button"
+                    className="btn primary large-btn"
+                    onClick={() => void beginListening()}
+                    disabled={sttLoading}
+                  >
+                    {sttLoading ? 'Слушаю…' : 'Ответить голосом'}
+                  </button>
+                )}
+                {autoListenAfterRu && (
+                  <button
+                    type="button"
+                    className="btn"
+                    onClick={() => void beginListening()}
+                    disabled={sttLoading}
+                  >
+                    Записать ответ снова
+                  </button>
+                )}
                 <button
                   type="button"
                   className="btn"
